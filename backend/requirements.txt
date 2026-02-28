@@ -1,0 +1,9 @@
+google-adk>=0.1.0
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+pypdf
+python-multipart
+sqlalchemy[asyncio]
+aiosqlite
