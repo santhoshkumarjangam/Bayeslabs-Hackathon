@@ -46,7 +46,9 @@ from agents.schemas import (
     PrioritizedTopic,
 )
 from database import get_db, init_db
+from document_service import router as documents_router
 from models import (
+    DocumentRecord,
     QuizQuestionRecord,
     QuizSubmissionRecord,
     SessionRecord,
@@ -89,6 +91,9 @@ app.add_middleware(
 async def on_startup():
     await init_db()
 
+# Mount sub-routers
+app.include_router(documents_router)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent singletons
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +119,22 @@ class FeedbackRequest(BaseModel):
     current_topic: str
     elapsed_mins: int
     previous_topic: Optional[str] = None
+
+
+class StartRequest(BaseModel):
+    message: str
+    document_ids: Optional[List[str]] = None
+    num_questions: int = 10
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "message": "I have a Machine Learning exam in 4 hours. Weak on backpropagation and CNNs.",
+                "document_ids": ["<uuid from POST /documents/upload>"],
+                "num_questions": 10,
+            }
+        }
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Response schemas (lightweight — for list views)
@@ -167,34 +188,52 @@ async def health_check():
 
 # ── STEP 1 ───────────────────────────────────────────────────────────────────
 
-@app.post("/start", response_model=DiagnosticQuiz, tags=["Step 1 – Upload & Quiz"])
+@app.post("/start", response_model=DiagnosticQuiz, tags=["Step 1 – Quiz"])
 async def start_session(
-    message: str = Form(..., description="Describe your situation: topic, time left, weak areas"),
-    file: Optional[UploadFile] = File(default=None, description="PDF or .txt notes (optional)"),
-    num_questions: int = Form(default=10, ge=3, le=20),
+    body: StartRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    **STEP 1** — Upload your notes + describe your situation.
-    Returns a diagnostic quiz. Use the `session_id` to submit answers.
-    """
-    # Extract text from uploaded file
-    notes_text = ""
-    if file and file.filename:
-        notes_text = await extract_text_from_upload(file)
+    **STEP 1** — Start a study session with a JSON payload.
 
-    full_input = message
+    Provide your situation message and optionally reference pre-uploaded
+    document IDs (from `POST /documents/upload`). The agent reads the
+    notes text directly from the database — no file re-upload needed.
+
+    Returns a `DiagnosticQuiz`. Use the `session_id` to submit answers.
+    """
+    notes_parts: list[str] = []
+    linked_docs: list[DocumentRecord] = []
+
+    # Fetch pre-uploaded documents from DB by ID
+    if body.document_ids:
+        for doc_id in body.document_ids:
+            result = await db.execute(
+                select(DocumentRecord).where(DocumentRecord.id == doc_id)
+            )
+            doc = result.scalar_one_or_none()
+            if doc is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Document '{doc_id}' not found. Upload via POST /documents/upload first.",
+                )
+            notes_parts.append(f"[{doc.filename}]\n{doc.raw_text}")
+            linked_docs.append(doc)
+
+    notes_text = "\n\n".join(notes_parts)
+    full_input = body.message
     if notes_text:
-        full_input += f"\n\n--- Uploaded Notes ---\n{notes_text[:4000]}"
+        full_input += f"\n\n--- Notes ---\n{notes_text[:4000]}"
 
     # Agent: parse student's panic state
     panic_state = await intake_agent.parse_student_input(full_input)
 
     # Agent: generate diagnostic quiz
+    num_q = max(3, min(body.num_questions, 20))
     questions = await quiz_agent.generate_quiz(
         panic_state=panic_state,
-        notes_text=notes_text or message,
-        num_questions=num_questions,
+        notes_text=notes_text or body.message,
+        num_questions=num_q,
     )
 
     if not questions:
@@ -214,6 +253,7 @@ async def start_session(
         notes_text=notes_text[:10000] if notes_text else "",
     )
     db_session.set_topics(panic_state.topics_mentioned)
+    db_session.documents.extend(linked_docs)
     db.add(db_session)
 
     for q in questions:
