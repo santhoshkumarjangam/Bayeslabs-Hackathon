@@ -2,13 +2,16 @@
 models.py — SQLAlchemy ORM models for the Cramming Crisis Coordinator.
 
 Tables:
-  documents         — uploaded files with extracted raw text
-  session_documents — many-to-many link: sessions ↔ documents
-  session_records   — one per student session (panic state + notes)
-  quiz_questions    — MCQs generated for a session
-  quiz_submissions  — student answers for a session
-  study_plans       — final adaptive plan generated after quiz scoring
-  sprint_sessions   — individual sprint blocks within a study plan
+  documents              — uploaded files with extracted raw text
+  session_documents      — many-to-many link: sessions ↔ documents
+  session_records        — one per student session (panic state + notes)
+  quiz_questions         — diagnostic MCQs for a session
+  quiz_submissions       — student answers for diagnostic quiz
+  study_plans            — adaptive plan generated after quiz scoring
+  sprint_sessions        — individual sprint blocks within a study plan
+  sprint_quiz_questions  — topic-wise MCQs generated after completing a sprint
+  sprint_quiz_attempts   — a student's quiz attempt on a sprint
+  sprint_quiz_answers    — per-question answers within an attempt
 """
 from __future__ import annotations
 
@@ -246,3 +249,94 @@ class SprintSessionRecord(Base):
 
     def set_questions(self, qs: list[str]) -> None:
         self.questions = json.dumps(qs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint Quiz Questions  (generated after a sprint is completed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SprintQuizQuestion(Base):
+    """
+    MCQ generated for a specific sprint topic.
+    Correct answer + explanation stored here — NOT sent to client until after submission.
+    """
+    __tablename__ = "sprint_quiz_questions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    sprint_id: Mapped[int] = mapped_column(Integer, ForeignKey("sprint_sessions.id"), index=True)
+    question_id: Mapped[str] = mapped_column(String(8))         # "sq1", "sq2", …
+    question: Mapped[str] = mapped_column(Text)
+    choices: Mapped[str] = mapped_column(Text)                  # JSON list of 4 choice strings
+    correct_answer: Mapped[str] = mapped_column(String(1))      # "A"|"B"|"C"|"D"
+    explanation: Mapped[str] = mapped_column(Text, default="")  # shown after submission
+    difficulty: Mapped[str] = mapped_column(String(16), default="medium")
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # Relationships
+    sprint: Mapped["SprintSessionRecord"] = relationship("SprintSessionRecord")
+    answers: Mapped[list["SprintQuizAnswer"]] = relationship(
+        "SprintQuizAnswer", back_populates="question", cascade="all, delete-orphan"
+    )
+
+    def get_choices(self) -> list[str]:
+        return json.loads(self.choices)
+
+    def set_choices(self, choices: list[str]) -> None:
+        self.choices = json.dumps(choices)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint Quiz Attempt  (one per student submission)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SprintQuizAttempt(Base):
+    """One quiz attempt by the student for a particular sprint."""
+    __tablename__ = "sprint_quiz_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    sprint_id: Mapped[int] = mapped_column(Integer, ForeignKey("sprint_sessions.id"), index=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # Scoring
+    score: Mapped[float] = mapped_column(Float, default=0.0)    # 0.0–1.0
+    correct_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # AI Evaluation
+    overall_feedback: Mapped[str] = mapped_column(Text, default="")
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
+    ready_for_exam: Mapped[bool] = mapped_column(Boolean, default=False)
+    recommended_action: Mapped[str] = mapped_column(String(32), default="review_topic")
+    question_feedback: Mapped[str] = mapped_column(Text, default="[]")   # JSON list
+
+    # Relationships
+    sprint: Mapped["SprintSessionRecord"] = relationship("SprintSessionRecord")
+    answers: Mapped[list["SprintQuizAnswer"]] = relationship(
+        "SprintQuizAnswer", back_populates="attempt", cascade="all, delete-orphan"
+    )
+
+    def get_question_feedback(self) -> list[dict]:
+        return json.loads(self.question_feedback)
+
+    def set_question_feedback(self, feedback: list[dict]) -> None:
+        self.question_feedback = json.dumps(feedback)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint Quiz Answers  (one per question in an attempt)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SprintQuizAnswer(Base):
+    """Student's answer to one question in a sprint quiz attempt."""
+    __tablename__ = "sprint_quiz_answers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    attempt_id: Mapped[str] = mapped_column(String(36), ForeignKey("sprint_quiz_attempts.id"), index=True)
+    question_db_id: Mapped[str] = mapped_column(String(36), ForeignKey("sprint_quiz_questions.id"))
+    question_id: Mapped[str] = mapped_column(String(8))         # "sq1", "sq2" …
+    selected_answer: Mapped[str] = mapped_column(String(1))     # "A"|"B"|"C"|"D"
+    correct_answer: Mapped[str] = mapped_column(String(1))
+    is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    attempt: Mapped["SprintQuizAttempt"] = relationship("SprintQuizAttempt", back_populates="answers")
+    question: Mapped["SprintQuizQuestion"] = relationship("SprintQuizQuestion", back_populates="answers")

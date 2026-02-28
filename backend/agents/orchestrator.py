@@ -79,7 +79,7 @@ class OrchestratorAgent:
             f"Total time available: {time_available_hours} hours "
             f"({int(time_available_hours * 60)} minutes)\n\n"
             f"Prioritized topics:\n{topics_json}\n\n"
-            "Generate the sprint plan as JSON. Include 'content' bullet points for each sprint."
+            "Generate the sprint plan as JSON. For each sprint, include a 'content' section with bullet points covering the detailed topics around 300-500 words, subtopics, and specific concepts to be taught during that sprint."
         )
 
         session = await self.runner.session_service.create_session(
