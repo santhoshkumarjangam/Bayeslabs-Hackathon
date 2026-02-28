@@ -40,7 +40,7 @@ Return ONLY valid JSON — no markdown, no code fences:
     "sprint_number": <1, 2, 3, ...>,
     "topic": "<topic name>",
     "duration_mins": <integer>,
-    "activity_type": "<Active Recall|Flashcards|Blurting|Practice Problems>",
+    "activity_type": "<Active Recall|Blurting|Practice Problems>",
     "content": [
       "• <key concept or fact 1>",
       "• <key concept or fact 2>",
@@ -52,6 +52,8 @@ Return ONLY valid JSON — no markdown, no code fences:
   },
   ...
 ]
+
+Note : Do not include flashcards as an activity type.
 """
 
 
