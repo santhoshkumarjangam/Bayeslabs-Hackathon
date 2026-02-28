@@ -234,6 +234,7 @@ class SprintSessionRecord(Base):
     duration_mins: Mapped[int] = mapped_column(Integer)
     activity_type: Mapped[str] = mapped_column(String(64))
     content: Mapped[str] = mapped_column(Text, default="[]")    # JSON list of bullet-point strings
+    detailed_material: Mapped[str] = mapped_column(Text, nullable=True) # 1-2 pages of study content
     questions: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of question strings
     tips: Mapped[str] = mapped_column(Text, nullable=True)
 

@@ -49,6 +49,7 @@ from database import get_db, init_db
 from document_service import router as documents_router
 from sprint_quiz_service import router as sprint_quiz_router
 from chat_service import router as chat_router
+from sprint_material_service import router as sprint_material_router
 from models import (
     DocumentRecord,
     QuizQuestionRecord,
@@ -97,6 +98,7 @@ async def on_startup():
 app.include_router(documents_router)
 app.include_router(sprint_quiz_router)
 app.include_router(chat_router)
+app.include_router(sprint_material_router)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent singletons
@@ -129,7 +131,7 @@ class StartRequest(BaseModel):
     message: str
     document_ids: Optional[List[str]] = None
     syllabus_document_ids: Optional[List[str]] = None
-    num_questions: int = 10
+    num_questions: int = 20
 
     model_config = {
         "json_schema_extra": {
