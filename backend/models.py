@@ -229,10 +229,17 @@ class SprintSessionRecord(Base):
     topic: Mapped[str] = mapped_column(String(255))
     duration_mins: Mapped[int] = mapped_column(Integer)
     activity_type: Mapped[str] = mapped_column(String(64))
-    questions: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of strings
+    content: Mapped[str] = mapped_column(Text, default="[]")    # JSON list of bullet-point strings
+    questions: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of question strings
     tips: Mapped[str] = mapped_column(Text, nullable=True)
 
     study_plan: Mapped["StudyPlanRecord"] = relationship("StudyPlanRecord", back_populates="sprints")
+
+    def get_content(self) -> list[str]:
+        return json.loads(self.content)
+
+    def set_content(self, items: list[str]) -> None:
+        self.content = json.dumps(items)
 
     def get_questions(self) -> list[str]:
         return json.loads(self.questions)

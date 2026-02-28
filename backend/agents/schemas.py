@@ -41,6 +41,7 @@ class SprintSession(pydantic.BaseModel):
     activity_type: str             # "Active Recall" | "Flashcards" | "Blurting"
     questions: List[str]
     tips: Optional[str] = None
+    content: List[str] = []        # bullet-point study notes / key concepts to review
 
 
 # ---------------------------------------------------------------------------

@@ -402,6 +402,7 @@ async def submit_quiz(
             activity_type=s.activity_type,
             tips=s.tips,
         )
+        db_sprint.set_content(s.content)
         db_sprint.set_questions(s.questions)
         db.add(db_sprint)
 
