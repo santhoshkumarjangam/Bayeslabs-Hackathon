@@ -7,3 +7,4 @@ pypdf
 python-multipart
 sqlalchemy[asyncio]
 aiosqlite
+google-genai==1.56.0
