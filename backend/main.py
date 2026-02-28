@@ -128,13 +128,15 @@ class FeedbackRequest(BaseModel):
 class StartRequest(BaseModel):
     message: str
     document_ids: Optional[List[str]] = None
+    syllabus_document_ids: Optional[List[str]] = None
     num_questions: int = 10
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "message": "I have a Machine Learning exam in 4 hours. Weak on backpropagation and CNNs.",
-                "document_ids": ["<uuid from POST /documents/upload>"],
+                "document_ids": ["<uuid of study notes from POST /documents/upload>"],
+                "syllabus_document_ids": ["<uuid of syllabus PDF from POST /documents/upload>"],
                 "num_questions": 10,
             }
         }
@@ -200,43 +202,60 @@ async def start_session(
     """
     **STEP 1** — Start a study session with a JSON payload.
 
-    Provide your situation message and optionally reference pre-uploaded
-    document IDs (from `POST /documents/upload`). The agent reads the
-    notes text directly from the database — no file re-upload needed.
+    Supply any combination of:
+    - `document_ids` — pre-uploaded **study notes/material** (from `POST /documents/upload`)
+    - `syllabus_document_ids` — pre-uploaded **syllabus / course outline** (also from `POST /documents/upload`)
 
-    Returns a `DiagnosticQuiz`. Use the `session_id` to submit answers.
+    Syllabus is used to extract exact exam topics and ensure nothing is missed in the study plan,
+    even if the student's notes don't cover everything.
     """
     notes_parts: list[str] = []
+    syllabus_parts: list[str] = []
     linked_docs: list[DocumentRecord] = []
 
-    # Fetch pre-uploaded documents from DB by ID
+    async def _fetch_doc(doc_id: str, label: str) -> DocumentRecord:
+        res = await db.execute(select(DocumentRecord).where(DocumentRecord.id == doc_id))
+        doc = res.scalar_one_or_none()
+        if doc is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{label} document '{doc_id}' not found. Upload via POST /documents/upload first.",
+            )
+        return doc
+
+    # ── Source 1: Study notes ──
     if body.document_ids:
         for doc_id in body.document_ids:
-            result = await db.execute(
-                select(DocumentRecord).where(DocumentRecord.id == doc_id)
-            )
-            doc = result.scalar_one_or_none()
-            if doc is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Document '{doc_id}' not found. Upload via POST /documents/upload first.",
-                )
+            doc = await _fetch_doc(doc_id, "Notes")
             notes_parts.append(f"[{doc.filename}]\n{doc.raw_text}")
             linked_docs.append(doc)
 
-    notes_text = "\n\n".join(notes_parts)
-    full_input = body.message
-    if notes_text:
-        full_input += f"\n\n--- Notes ---\n{notes_text[:4000]}"
+    # ── Source 2: Syllabus / course outline ──
+    if body.syllabus_document_ids:
+        for doc_id in body.syllabus_document_ids:
+            doc = await _fetch_doc(doc_id, "Syllabus")
+            syllabus_parts.append(f"[{doc.filename}]\n{doc.raw_text}")
+            linked_docs.append(doc)
 
-    # Agent: parse student's panic state
+    notes_text = "\n\n".join(notes_parts)
+    syllabus_text = "\n\n".join(syllabus_parts)
+
+    # Build the full input for intake agent
+    full_input = body.message
+    if syllabus_text:
+        full_input += f"\n\n--- Syllabus / Exam Topics ---\n{syllabus_text[:3000]}"
+    if notes_text:
+        full_input += f"\n\n--- Study Notes ---\n{notes_text[:3000]}"
+
+    # Agent: parse student's panic state (syllabus topics inform the topic list)
     panic_state = await intake_agent.parse_student_input(full_input)
 
-    # Agent: generate diagnostic quiz
+    # Agent: generate diagnostic quiz (quiz questions based on notes + syllabus)
+    quiz_context = notes_text or syllabus_text or body.message
     num_q = max(3, min(body.num_questions, 20))
     questions = await quiz_agent.generate_quiz(
         panic_state=panic_state,
-        notes_text=notes_text or body.message,
+        notes_text=quiz_context,
         num_questions=num_q,
     )
 
@@ -255,6 +274,7 @@ async def start_session(
         summary=panic_state.summary,
         extracted_text=panic_state.extracted_text[:5000],
         notes_text=notes_text[:10000] if notes_text else "",
+        syllabus_text=syllabus_text[:10000] if syllabus_text else "",
     )
     db_session.set_topics(panic_state.topics_mentioned)
     db_session.documents.extend(linked_docs)
@@ -366,8 +386,11 @@ async def submit_quiz(
         ),
     )
 
-    # Agents: build adaptive plan from weak topics
-    prioritized = await prioritizer.prioritize(focused_panic)
+    # Agents: build adaptive plan from weak topics (syllabus ensures full coverage)
+    prioritized = await prioritizer.prioritize(
+        focused_panic,
+        syllabus_text=db_session.syllabus_text or "",
+    )
     sprints = await orchestrator.create_sprint_plan(
         topics=prioritized,
         time_available_hours=db_session.time_available_hours,

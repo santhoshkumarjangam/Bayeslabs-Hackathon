@@ -58,17 +58,24 @@ class PrioritizationAgent:
         )
 
     async def prioritize(
-        self, panic_state: PanicState
+        self, panic_state: PanicState, syllabus_text: str = ""
     ) -> List[PrioritizedTopic]:
-        """Rank topics from a PanicState object."""
+        """Rank topics from a PanicState object, optionally using a syllabus for complete coverage."""
         topics_str = ", ".join(panic_state.topics_mentioned) if panic_state.topics_mentioned else "general exam topics"
         user_message = (
             f"Topics to study: {topics_str}\n"
             f"Time available: {panic_state.time_available_hours} hours\n"
             f"Student summary: {panic_state.summary}\n"
-            f"Panic level: {panic_state.panic_level}/10\n\n"
-            "Please rank these topics and return the prioritized list as JSON."
+            f"Panic level: {panic_state.panic_level}/10\n"
         )
+        if syllabus_text:
+            user_message += (
+                f"\nSyllabus / Course Outline (ALL topics that may appear on the exam):\n"
+                f"{syllabus_text[:3000]}\n\n"
+                "IMPORTANT: ensure every topic on the syllabus is included in the prioritized list, "
+                "even if not mentioned above. Rank syllabus topics that overlap with weak topics highest.\n"
+            )
+        user_message += "\nPlease rank these topics and return the prioritized list as JSON."
 
         session = await self.runner.session_service.create_session(
             app_name="cramming_crisis_coordinator",

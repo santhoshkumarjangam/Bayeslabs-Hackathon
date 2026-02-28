@@ -105,7 +105,8 @@ class SessionRecord(Base):
     urgency_reason: Mapped[str] = mapped_column(Text, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")
     extracted_text: Mapped[str] = mapped_column(Text, default="")       # raw input
-    notes_text: Mapped[str] = mapped_column(Text, default="")           # extracted from file
+    notes_text: Mapped[str] = mapped_column(Text, default="")           # extracted from study notes
+    syllabus_text: Mapped[str] = mapped_column(Text, default="")        # extracted from syllabus/outline
 
     # Relationships
     questions: Mapped[list["QuizQuestionRecord"]] = relationship(
