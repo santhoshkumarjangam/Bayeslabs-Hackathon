@@ -57,6 +57,9 @@ from models import (
     SprintSessionRecord,
     StudyPlanRecord,
 )
+from services.flash_card_llm import generate_flashcards
+from services.mindmap_llm import generate_mindmap
+import asyncio
 
 load_dotenv()
 
@@ -141,6 +144,15 @@ class StartRequest(BaseModel):
             }
         }
     }
+
+
+class FlashcardResponse(BaseModel):
+    sprint_id: int
+    flashcards: str
+
+class MindmapResponse(BaseModel):
+    document_id: str
+    mindmap_mermaid: str
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Response schemas (lightweight — for list views)
@@ -467,6 +479,81 @@ async def clarify_topic(request: ClarifyRequest):
     return await clarify_agent.clarify_topic(
         confused_topic=request.confused_topic,
         student_context=request.context or "",
+    )
+
+
+# ── FLASHCARDS ───────────────────────────────────────────────────────────────
+
+@app.post("/sprints/{sprint_id}/flashcards", response_model=FlashcardResponse, tags=["Flashcards"])
+async def generate_sprint_flashcards(
+    sprint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    **Generate Flashcards** for a specific sprint block.
+    Reads the `topic`, `content`, and `questions` arrays of a `SprintSessionRecord` 
+    and uses the Micro-Session Orchestrator agent to generate high-yield active recall flashcards.
+    """
+    result = await db.execute(
+        select(SprintSessionRecord).where(SprintSessionRecord.id == sprint_id)
+    )
+    sprint = result.scalar_one_or_none()
+    
+    if not sprint:
+        raise HTTPException(status_code=404, detail=f"Sprint with ID '{sprint_id}' not found.")
+        
+    sprint_topic = sprint.topic
+    sprint_content = sprint.get_content()
+    sprint_questions = sprint.get_questions()
+        
+    try:
+        # Run the synchronous GenAPI call in a separate thread so we don't block the event loop
+        flashcards_text = await asyncio.to_thread(
+            generate_flashcards, 
+            sprint_topic, 
+            sprint_content, 
+            sprint_questions
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate flashcards: {e}")
+        
+    return FlashcardResponse(
+        sprint_id=sprint.id,
+        flashcards=flashcards_text
+    )
+
+# ── MINDMAP ──────────────────────────────────────────────────────────────────
+
+@app.post("/documents/{document_id}/mindmap", response_model=MindmapResponse, tags=["Mindmap"])
+async def generate_document_mindmap(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    **Generate Mindmap** for a specific document.
+    Reads the `raw_text` of a `DocumentRecord` and uses the Visual Knowledge Architect agent 
+    to extract structure and generate a strictly formatted Mermaid.js mindmap diagram.
+    """
+    result = await db.execute(
+        select(DocumentRecord).where(DocumentRecord.id == document_id)
+    )
+    doc = result.scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
+        
+    if not doc.raw_text or not doc.raw_text.strip():
+        raise HTTPException(status_code=400, detail="Document has no extracted text to generate mindmap from.")
+        
+    try:
+        # Avoid event loop blocking for the synchronous API call
+        mindmap_mermaid_text = await asyncio.to_thread(generate_mindmap, doc.raw_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate mindmap: {e}")
+        
+    return MindmapResponse(
+        document_id=doc.id,
+        mindmap_mermaid=mindmap_mermaid_text
     )
 
 
